@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/tracing"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/sleepmanager"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/utils/entropy"
 )
 
@@ -237,6 +239,7 @@ func (r *OpenAIRouter) handleSpecifiedModelRouting(openAIRequest *openai.ChatCom
 }
 
 // selectEndpointForModel selects the best endpoint for the given model
+// If the endpoint is in sleep mode, it will be woken up automatically
 func (r *OpenAIRouter) selectEndpointForModel(ctx *RequestContext, model string) string {
 	backendCtx, backendSpan := tracing.StartSpan(ctx.TraceContext, tracing.SpanBackendSelection)
 
@@ -249,6 +252,12 @@ func (r *OpenAIRouter) selectEndpointForModel(ctx *RequestContext, model string)
 			tracing.SetSpanAttributes(backendSpan,
 				attribute.String(tracing.AttrEndpointName, endpoints[0].Name),
 				attribute.String(tracing.AttrEndpointAddress, endpointAddress))
+		}
+
+		// Ensure endpoint is awake if sleep mode is enabled
+		if err := r.ensureEndpointAwake(ctx, endpointAddress); err != nil {
+			logging.Errorf("Failed to wake up endpoint %s: %v", endpointAddress, err)
+			// Continue anyway - the request will fail at the backend if endpoint is not ready
 		}
 	} else {
 		logging.Warnf("No endpoint found for model %s, using fallback", model)
@@ -264,6 +273,22 @@ func (r *OpenAIRouter) selectEndpointForModel(ctx *RequestContext, model string)
 	metrics.IncrementModelActiveRequests(model)
 
 	return endpointAddress
+}
+
+// ensureEndpointAwake ensures the endpoint is awake before routing requests to it
+func (r *OpenAIRouter) ensureEndpointAwake(ctx *RequestContext, endpointAddress string) error {
+	manager := sleepmanager.GetManager()
+	if manager == nil {
+		return nil // Sleep manager not initialized
+	}
+
+	// Use a context with timeout for wake-up
+	wakeCtx := ctx.TraceContext
+	if wakeCtx == nil {
+		wakeCtx = context.Background()
+	}
+
+	return manager.EnsureAwake(wakeCtx, endpointAddress)
 }
 
 // modifyRequestBodyForAutoRouting modifies the request body for auto routing

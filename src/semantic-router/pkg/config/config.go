@@ -594,6 +594,35 @@ type VLLMEndpoint struct {
 
 	// Load balancing weight for this endpoint
 	Weight int `yaml:"weight,omitempty"`
+
+	// SleepMode configuration for automatic sleep/wake management
+	SleepMode *EndpointSleepConfig `yaml:"sleep_mode,omitempty"`
+}
+
+// EndpointSleepConfig represents sleep mode configuration for a vLLM endpoint
+type EndpointSleepConfig struct {
+	// Enable sleep mode management for this endpoint
+	// When enabled, the router will wake up sleeping endpoints before routing requests
+	Enabled bool `yaml:"enabled"`
+
+	// SleepLevel specifies the sleep level (1 or 2)
+	// Level 1: Offloads model weights to CPU RAM and discards KV cache
+	// Level 2: Discards both model weights and KV cache
+	// Default: 1
+	SleepLevel int `yaml:"level,omitempty"`
+
+	// InactivityTimeoutSeconds specifies how long to wait before putting endpoint to sleep
+	// 0 means no automatic sleep (must be triggered manually or via API)
+	// Default: 0
+	InactivityTimeoutSeconds int `yaml:"inactivity_timeout_seconds,omitempty"`
+
+	// WakeUpTimeoutSeconds specifies max time to wait for endpoint to wake up
+	// Default: 60
+	WakeUpTimeoutSeconds int `yaml:"wake_up_timeout_seconds,omitempty"`
+
+	// WakeUpRetryIntervalMs specifies interval between wake-up status checks
+	// Default: 500
+	WakeUpRetryIntervalMs int `yaml:"wake_up_retry_interval_ms,omitempty"`
 }
 
 // ModelPricing represents configuration for model-specific parameters

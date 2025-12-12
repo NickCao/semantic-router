@@ -142,6 +142,12 @@ func (s *ClassificationAPIServer) setupRoutes() *http.ServeMux {
 		logging.Infof("System prompt configuration endpoints disabled for security")
 	}
 
+	// Sleep mode management endpoints
+	mux.HandleFunc("GET /api/v1/endpoints/sleep", s.handleGetEndpointStates)
+	mux.HandleFunc("GET /api/v1/endpoints/sleep/state", s.handleGetEndpointState)
+	mux.HandleFunc("POST /api/v1/endpoints/sleep", s.handleSleepEndpoint)
+	mux.HandleFunc("POST /api/v1/endpoints/wake", s.handleWakeEndpoint)
+
 	return mux
 }
 

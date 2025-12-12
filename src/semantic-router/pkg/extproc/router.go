@@ -15,6 +15,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/responsestore"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/services"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/sleepmanager"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/tools"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/utils/pii"
 )
@@ -176,6 +177,21 @@ func NewOpenAIRouter(configPath string) (*OpenAIRouter, error) {
 		} else {
 			responseAPIFilter = NewResponseAPIFilter(responseStore)
 			logging.Infof("Response API enabled with %s backend", cfg.ResponseAPI.StoreBackend)
+		}
+	}
+
+	// Initialize sleep manager for endpoints with sleep mode enabled
+	if len(cfg.VLLMEndpoints) > 0 {
+		hasSleepMode := false
+		for _, ep := range cfg.VLLMEndpoints {
+			if ep.SleepMode != nil && ep.SleepMode.Enabled {
+				hasSleepMode = true
+				break
+			}
+		}
+		if hasSleepMode {
+			sleepmanager.InitManager(cfg.VLLMEndpoints)
+			logging.Infof("Sleep manager initialized for vLLM endpoints with sleep mode enabled")
 		}
 	}
 

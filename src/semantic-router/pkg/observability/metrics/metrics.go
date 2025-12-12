@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"sync"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -414,6 +415,63 @@ var (
 			Help: "The number of times entropy-based routing falls back to traditional classification",
 		},
 		[]string{"fallback_reason", "fallback_strategy"},
+	)
+
+	// Sleep mode metrics for vLLM endpoints
+
+	// EndpointWakeUpAttempts tracks the total number of wake-up attempts by endpoint
+	EndpointWakeUpAttempts = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_endpoint_wakeup_attempts_total",
+			Help: "The total number of wake-up attempts for sleeping vLLM endpoints",
+		},
+		[]string{"endpoint_name", "endpoint_address"},
+	)
+
+	// EndpointWakeUpSuccesses tracks successful wake-ups
+	EndpointWakeUpSuccesses = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_endpoint_wakeup_successes_total",
+			Help: "The total number of successful wake-ups for vLLM endpoints",
+		},
+		[]string{"endpoint_name", "endpoint_address"},
+	)
+
+	// EndpointWakeUpFailures tracks failed wake-ups
+	EndpointWakeUpFailures = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_endpoint_wakeup_failures_total",
+			Help: "The total number of failed wake-ups for vLLM endpoints",
+		},
+		[]string{"endpoint_name", "endpoint_address"},
+	)
+
+	// EndpointWakeUpDuration tracks the time taken to wake up endpoints
+	EndpointWakeUpDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "llm_endpoint_wakeup_duration_seconds",
+			Help:    "The time taken to wake up a sleeping vLLM endpoint in seconds",
+			Buckets: []float64{0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300},
+		},
+		[]string{"endpoint_name", "endpoint_address"},
+	)
+
+	// EndpointSleepEvents tracks when endpoints are put to sleep
+	EndpointSleepEvents = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_endpoint_sleep_events_total",
+			Help: "The total number of times vLLM endpoints have been put to sleep",
+		},
+		[]string{"endpoint_name", "endpoint_address"},
+	)
+
+	// EndpointState tracks current state of endpoints (gauge for current state)
+	EndpointStateGauge = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "llm_endpoint_state",
+			Help: "The current state of vLLM endpoints (0=unknown, 1=awake, 2=sleeping, 3=waking_up, 4=going_to_sleep)",
+		},
+		[]string{"endpoint_name", "endpoint_address"},
 	)
 )
 
@@ -928,4 +986,54 @@ func RecordEntropyClassificationMetrics(
 	if latencySeconds > 0 {
 		RecordEntropyClassificationLatency(latencySeconds)
 	}
+}
+
+// Sleep mode metrics helper functions
+
+// RecordEndpointWakeUpAttempt records a wake-up attempt for an endpoint
+func RecordEndpointWakeUpAttempt(endpointName, endpointAddress string) {
+	if endpointName == "" {
+		endpointName = consts.UnknownLabel
+	}
+	EndpointWakeUpAttempts.WithLabelValues(endpointName, endpointAddress).Inc()
+}
+
+// RecordEndpointWakeUpSuccess records a successful wake-up with duration
+func RecordEndpointWakeUpSuccess(endpointName, endpointAddress string, duration time.Duration) {
+	if endpointName == "" {
+		endpointName = consts.UnknownLabel
+	}
+	EndpointWakeUpSuccesses.WithLabelValues(endpointName, endpointAddress).Inc()
+	EndpointWakeUpDuration.WithLabelValues(endpointName, endpointAddress).Observe(duration.Seconds())
+	// Update state gauge to awake (1)
+	EndpointStateGauge.WithLabelValues(endpointName, endpointAddress).Set(1)
+}
+
+// RecordEndpointWakeUpFailure records a failed wake-up attempt
+func RecordEndpointWakeUpFailure(endpointName, endpointAddress string) {
+	if endpointName == "" {
+		endpointName = consts.UnknownLabel
+	}
+	EndpointWakeUpFailures.WithLabelValues(endpointName, endpointAddress).Inc()
+	// Update state gauge to unknown (0)
+	EndpointStateGauge.WithLabelValues(endpointName, endpointAddress).Set(0)
+}
+
+// RecordEndpointSleep records when an endpoint is put to sleep
+func RecordEndpointSleep(endpointName, endpointAddress string) {
+	if endpointName == "" {
+		endpointName = consts.UnknownLabel
+	}
+	EndpointSleepEvents.WithLabelValues(endpointName, endpointAddress).Inc()
+	// Update state gauge to sleeping (2)
+	EndpointStateGauge.WithLabelValues(endpointName, endpointAddress).Set(2)
+}
+
+// UpdateEndpointState updates the state gauge for an endpoint
+// States: 0=unknown, 1=awake, 2=sleeping, 3=waking_up, 4=going_to_sleep
+func UpdateEndpointState(endpointName, endpointAddress string, stateValue float64) {
+	if endpointName == "" {
+		endpointName = consts.UnknownLabel
+	}
+	EndpointStateGauge.WithLabelValues(endpointName, endpointAddress).Set(stateValue)
 }
