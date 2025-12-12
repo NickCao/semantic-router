@@ -1,0 +1,86 @@
+# Model files (too large for Docker builds)
+models/
+
+# Rust build artifacts
+target/
+
+# Python
+*.pyc
+*.pyo
+__pycache__/
+.venv/
+pii_env/
+dist/
+build/
+*.egg-info/
+
+# Go build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+bin/
+extproc-server
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Environment
+.env
+.env.*
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Documentation and specs
+spec/
+results/
+reports/
+website/
+docs/
+
+# Training data
+wikipedia_data/
+FaithDial_dataset/
+FactCHD_dataset/
+
+# Node modules (for website/dashboard)
+node_modules/
+dashboard/frontend/node_modules/
+dashboard/frontend/dist/
+
+# Test data and fixtures
+*_test.go
+*_test.py
+testdata/
+test_data/
+
+# Logs
+logs/
+*.log
+
+# Trained model outputs
+**/lora_*_model/
+**/lora_*_model_rust/
+*.safetensors
+*.pt
+*.pth
+*.bin
+*.onnx
+*.h5
+
+# Editor/AI tooling
+.cursor/
+.roo/
+CLAUDE.md
+.cursorrules
+.augment
+
