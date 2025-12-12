@@ -53,12 +53,12 @@ vllm_endpoints:
     # When enabled, the router will automatically wake up sleeping endpoints when requests are routed to them.
     # This allows vLLM servers to release GPU memory when idle and resume quickly when needed.
     # Prerequisites: vLLM server must be started with VLLM_SERVER_DEV_MODE=1 and --enable-sleep-mode flags
-    # sleep_mode:
-    #   enabled: true                         # Enable sleep mode management for this endpoint
-    #   level: 1                              # Sleep level: 1 (offload to CPU) or 2 (discard weights)
-    #   inactivity_timeout_seconds: 300       # Auto-sleep after 5 minutes of inactivity (0 = disabled)
-    #   wake_up_timeout_seconds: 60           # Max time to wait for wake-up (default: 60)
-    #   wake_up_retry_interval_ms: 500        # Interval between health checks during wake-up (default: 500)
+    sleep_mode:
+      enabled: true                         # Enable sleep mode management for this endpoint
+      level: 1                              # Sleep level: 1 (offload to CPU) or 2 (discard weights)
+      inactivity_timeout_seconds: 30        # Auto-sleep after 30 seconds of inactivity (0 = disabled)
+      wake_up_timeout_seconds: 60           # Max time to wait for wake-up (default: 60)
+      wake_up_retry_interval_ms: 500        # Interval between health checks during wake-up (default: 500)
 
 model_config:
   "qwen3":
