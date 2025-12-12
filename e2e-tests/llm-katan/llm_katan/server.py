@@ -88,6 +88,14 @@ metrics = {
     "start_time": time.time(),
 }
 
+# Sleep mode state
+sleep_state = {
+    "is_sleeping": False,
+    "sleep_level": 0,
+    "sleep_time": None,
+    "wake_up_delay_seconds": 0.5,  # Simulated wake-up delay
+}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -127,15 +135,130 @@ def create_app(config: ServerConfig) -> FastAPI:
     @app.get("/health", response_model=HealthResponse)
     async def health():
         """Health check endpoint"""
+        # When sleeping, health check should indicate server is not ready
+        if sleep_state["is_sleeping"]:
+            raise HTTPException(
+                status_code=503,
+                detail="Server is in sleep mode"
+            )
         return HealthResponse(
             status="ok",
             model=config.served_model_name,
             backend=config.backend,
         )
 
+    @app.post("/sleep")
+    async def sleep(level: int = 1):
+        """
+        Put the server into sleep mode (vLLM-compatible endpoint).
+
+        Sleep levels:
+        - Level 1: Offloads model weights to CPU RAM and discards KV cache
+        - Level 2: Discards both model weights and KV cache
+
+        This is a mock implementation for testing the semantic-router's
+        sleep mode management functionality.
+        """
+        if sleep_state["is_sleeping"]:
+            return {
+                "status": "already_sleeping",
+                "level": sleep_state["sleep_level"],
+                "message": "Server is already in sleep mode"
+            }
+
+        sleep_state["is_sleeping"] = True
+        sleep_state["sleep_level"] = level
+        sleep_state["sleep_time"] = time.time()
+
+        logger.info(f"😴 Server entering sleep mode (level {level})")
+
+        return {
+            "status": "sleeping",
+            "level": level,
+            "message": f"Server is now in sleep mode (level {level})"
+        }
+
+    @app.post("/wake_up")
+    async def wake_up(tags: Optional[str] = None):
+        """
+        Wake up the server from sleep mode (vLLM-compatible endpoint).
+
+        Supports optional `tags` query parameter for partial wake-up:
+        - `?tags=weights` - Only restore model weights
+        - `?tags=kv_cache` - Only restore KV cache
+        - No tags - Full wake-up (restore everything)
+
+        This simulates the wake-up process with a configurable delay.
+        """
+        if not sleep_state["is_sleeping"]:
+            return {
+                "status": "already_awake",
+                "message": "Server is already awake"
+            }
+
+        # Simulate wake-up delay
+        wake_delay = sleep_state["wake_up_delay_seconds"]
+        logger.info(f"⏰ Server waking up (simulated delay: {wake_delay}s, tags: {tags})")
+        await asyncio.sleep(wake_delay)
+
+        sleep_duration = time.time() - sleep_state["sleep_time"] if sleep_state["sleep_time"] else 0
+        previous_level = sleep_state["sleep_level"]
+
+        # For partial wake-up with tags, we simulate staying in sleep mode
+        # until all components are restored (vLLM behavior)
+        if tags is None:
+            # Full wake-up
+            sleep_state["is_sleeping"] = False
+            sleep_state["sleep_level"] = 0
+            sleep_state["sleep_time"] = None
+            logger.info(f"☀️ Server fully woke up after {sleep_duration:.2f}s of sleep")
+        else:
+            # Partial wake-up - server reports sleeping until all components restored
+            logger.info(f"🌤️ Server partially woke up (tags: {tags}), still sleeping")
+
+        return {
+            "status": "awake" if tags is None else "partial_wake",
+            "previous_level": previous_level,
+            "sleep_duration_seconds": sleep_duration,
+            "tags": tags,
+            "message": "Server is now awake" if tags is None else f"Restored: {tags}"
+        }
+
+    @app.post("/collective_rpc")
+    async def collective_rpc(request: Request):
+        """
+        Perform a collective remote procedure call (vLLM-compatible endpoint).
+
+        Used for operations like `reload_weights` during RLHF weight updates.
+        """
+        try:
+            body = await request.json()
+            method = body.get("method", "")
+        except Exception:
+            method = ""
+
+        logger.info(f"🔄 Collective RPC called with method: {method}")
+
+        # Mock implementation - just acknowledge the RPC
+        return {
+            "status": "ok",
+            "method": method,
+            "message": f"Collective RPC '{method}' executed successfully"
+        }
+
+    @app.get("/is_sleeping")
+    async def is_sleeping():
+        """Check if the model is sleeping (vLLM-compatible endpoint)."""
+        return sleep_state["is_sleeping"]
+
     @app.get("/v1/models", response_model=ModelsResponse)
     async def list_models():
         """List available models"""
+        if sleep_state["is_sleeping"]:
+            raise HTTPException(
+                status_code=503,
+                detail="Server is in sleep mode. Call /wake_up to resume."
+            )
         if backend is None:
             raise HTTPException(status_code=503, detail="Model not loaded")
 
@@ -145,6 +268,11 @@ def create_app(config: ServerConfig) -> FastAPI:
     @app.post("/v1/chat/completions")
     async def chat_completions(request: ChatCompletionRequest, http_request: Request):
         """Chat completions endpoint (OpenAI compatible)"""
+        if sleep_state["is_sleeping"]:
+            raise HTTPException(
+                status_code=503,
+                detail="Server is in sleep mode. Call /wake_up to resume."
+            )
         if backend is None:
             raise HTTPException(status_code=503, detail="Model not loaded")
 
