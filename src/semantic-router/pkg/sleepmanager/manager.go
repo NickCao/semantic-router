@@ -80,20 +80,28 @@ func InitManager(endpoints []config.VLLMEndpoint) *Manager {
 
 	// Update endpoints
 	instance.mu.Lock()
+	var endpointsToCheck []*EndpointInfo
 	for _, ep := range endpoints {
 		if ep.SleepMode != nil && ep.SleepMode.Enabled {
 			addr := fmt.Sprintf("%s:%d", ep.Address, ep.Port)
-			instance.endpoints[addr] = &EndpointInfo{
+			info := &EndpointInfo{
 				Name:         ep.Name,
 				Address:      addr,
 				State:        StateUnknown,
 				LastActivity: time.Now(),
 				SleepConfig:  ep.SleepMode,
 			}
+			instance.endpoints[addr] = info
+			endpointsToCheck = append(endpointsToCheck, info)
 			logging.Infof("Sleep manager: Registered endpoint %s (%s) with sleep mode enabled", ep.Name, addr)
 		}
 	}
 	instance.mu.Unlock()
+
+	// Check initial state of all endpoints asynchronously
+	for _, info := range endpointsToCheck {
+		go instance.refreshEndpointState(info)
+	}
 
 	// Start background workers
 	instance.wg.Add(1)
@@ -300,6 +308,71 @@ func (m *Manager) isEndpointHealthy(address string) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
+// checkEndpointSleepStatus queries the /is_sleeping endpoint to get actual sleep state
+// Returns true if sleeping, false if awake, and error if unable to determine
+func (m *Manager) checkEndpointSleepStatus(address string) (bool, error) {
+	isSleepingURL := fmt.Sprintf("http://%s/is_sleeping", address)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, isSleepingURL, nil)
+	if err != nil {
+		return false, fmt.Errorf("failed to create is_sleeping request: %w", err)
+	}
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("failed to query is_sleeping endpoint: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("is_sleeping endpoint returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false, fmt.Errorf("failed to read is_sleeping response: %w", err)
+	}
+
+	// The /is_sleeping endpoint returns a boolean (true/false)
+	bodyStr := string(body)
+	if bodyStr == "true" {
+		return true, nil
+	} else if bodyStr == "false" {
+		return false, nil
+	}
+
+	return false, fmt.Errorf("unexpected is_sleeping response: %s", bodyStr)
+}
+
+// refreshEndpointState queries the endpoint to determine its actual state
+func (m *Manager) refreshEndpointState(info *EndpointInfo) {
+	isSleeping, err := m.checkEndpointSleepStatus(info.Address)
+	if err != nil {
+		// If we can't determine sleep status, check if endpoint is healthy
+		if m.isEndpointHealthy(info.Address) {
+			m.setEndpointState(info, StateAwake)
+			logging.Infof("Sleep manager: Endpoint %s (%s) is awake (determined via health check)", info.Name, info.Address)
+		} else {
+			// Can't reach endpoint, leave as unknown
+			logging.Warnf("Sleep manager: Unable to determine state for endpoint %s (%s): %v", info.Name, info.Address, err)
+		}
+		return
+	}
+
+	if isSleeping {
+		m.setEndpointState(info, StateSleeping)
+		logging.Infof("Sleep manager: Endpoint %s (%s) is sleeping", info.Name, info.Address)
+	} else {
+		m.setEndpointState(info, StateAwake)
+		info.mu.Lock()
+		info.LastActivity = time.Now()
+		info.mu.Unlock()
+		logging.Infof("Sleep manager: Endpoint %s (%s) is awake", info.Name, info.Address)
+	}
+}
+
 // Sleep puts an endpoint to sleep
 func (m *Manager) Sleep(ctx context.Context, address string) error {
 	if !m.IsSleepModeEnabled(address) {
@@ -400,6 +473,16 @@ func (m *Manager) checkInactivity() {
 		state := info.State
 		lastActivity := info.LastActivity
 		info.mu.RUnlock()
+
+		// If state is unknown, refresh it first
+		if state == StateUnknown {
+			m.refreshEndpointState(info)
+			// Re-read state after refresh
+			info.mu.RLock()
+			state = info.State
+			lastActivity = info.LastActivity
+			info.mu.RUnlock()
+		}
 
 		if state != StateAwake {
 			continue // Only sleep awake endpoints
